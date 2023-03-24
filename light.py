@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from enocean.utils import combine_hex
+from enoceanjob.utils import combine_hex
 import voluptuous as vol
 
 from homeassistant.components.light import (

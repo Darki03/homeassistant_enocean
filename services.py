@@ -5,10 +5,10 @@ import logging
 import queue
 import time
 
-from enocean import utils
-from enocean.communicators import Communicator
-from enocean.protocol.constants import PACKET, RORG
-from enocean.protocol.packet import Packet, UTETeachInPacket
+from enoceanjob import utils
+from enoceanjob.communicators import Communicator
+from enoceanjob.protocol.constants import PACKET, RORG
+from enoceanjob.protocol.packet import Packet, UTETeachInPacket
 import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
 from homeassistant.core import HomeAssistant, ServiceCall

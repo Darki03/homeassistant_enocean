@@ -3,8 +3,8 @@ import glob
 import logging
 from os.path import basename, normpath
 
-from enocean.communicators import SerialCommunicator
-from enocean.protocol.packet import RadioPacket
+from enoceanjob.communicators import SerialCommunicator
+from enoceanjob.protocol.packet import RadioPacket
 import serial
 
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, dispatcher_send
@@ -35,6 +35,7 @@ class EnOceanDongle:
     async def async_setup(self):
         """Finish the setup of the bridge and supported platforms."""
         self._communicator.start()
+        self._communicator.base_id = [0x00] * 4
         self.dispatcher_disconnect_handle = async_dispatcher_connect(
             self.hass, SIGNAL_SEND_MESSAGE, self._send_message_callback
         )
@@ -47,7 +48,10 @@ class EnOceanDongle:
 
     def _send_message_callback(self, command):
         """Send a command through the EnOcean dongle."""
-        self._communicator.send(command)
+        if isinstance(command, list):
+            self._communicator.send_list(command)
+        else:
+            self._communicator.send(command)
 
     def send_message(self, command):
         """Send a command through the EnOcean dongle (public)."""
@@ -76,7 +80,7 @@ def detect():
     This method is currently a bit simplistic, it may need to be
     improved to support more configurations and OS.
     """
-    globs_to_test = ["/dev/tty*FTOA2PV*", "/dev/serial/by-id/*EnOcean*"]
+    globs_to_test = ["/dev/tty*FTOA2PV*", "/dev/serial/by-id/*EnOcean*", "/dev/serial/by-id/*ESP32S2*"]
     found_paths = []
     for current_glob in globs_to_test:
         found_paths.extend(glob.glob(current_glob))

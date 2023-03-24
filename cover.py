@@ -5,9 +5,9 @@ import asyncio
 from enum import Enum
 import logging
 
-from enocean.protocol.constants import RORG
-from enocean.protocol.packet import RadioPacket
-from enocean.utils import combine_hex
+from enoceanjob.protocol.constants import RORG
+from enoceanjob.protocol.packet import RadioPacket
+from enoceanjob.utils import combine_hex
 import voluptuous as vol
 
 from homeassistant.components.cover import (

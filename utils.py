@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import logging
 
-from enocean.communicators import Communicator
+from enoceanjob.communicators import Communicator
+from enoceanjob.utils import combine_hex
 
 # import DATA_ENOCEAN, ENOCEAN_DONGLE, EnOceanDongle
 import homeassistant.components.enocean as ec
@@ -45,3 +46,11 @@ def hex_to_list(hex_list):
         result.append(int(hex_value))
     result.reverse()
     return result
+
+
+def add_one_to_byte_list_num(BLN):
+     if BLN == []:
+          return BLN
+     int_RLC_in = combine_hex(BLN)
+     int_RLC_in += 1
+     return list(int_RLC_in.to_bytes(len(BLN), 'big'))

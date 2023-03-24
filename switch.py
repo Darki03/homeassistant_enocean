@@ -1,7 +1,7 @@
 """Support for EnOcean switches."""
 from __future__ import annotations
-from enocean.protocol.constants import RORG
-from enocean.utils import combine_hex
+from enoceanjob.protocol.constants import RORG
+from enoceanjob.utils import combine_hex
 import voluptuous as vol
 
 from homeassistant.components.switch import PLATFORM_SCHEMA, SwitchEntity

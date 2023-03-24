@@ -2,9 +2,9 @@
 from abc import ABC, abstractmethod
 import logging
 
-from enocean.communicators import Communicator
-from enocean.protocol.constants import PACKET
-from enocean.protocol.packet import Packet, RadioPacket
+from enoceanjob.communicators import Communicator
+from enoceanjob.protocol.constants import PACKET
+from enoceanjob.protocol.packet import Packet, RadioPacket
 
 from homeassistant.core import HomeAssistant
 
