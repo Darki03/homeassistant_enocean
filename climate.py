@@ -1,6 +1,7 @@
 """Representation of HVAC EnOcean device*"""
 import voluptuous as vol
 import logging
+import asyncio
 
 # HA imports
 from homeassistant.core import HomeAssistant
@@ -133,6 +134,7 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
         self._hvac_action = CURRENT_HVAC_OFF
         self._hvac_list.append(HVAC_MODE_OFF)
         self._hvac_list.append(HVAC_MODE_HEAT)
+        self._telegram_received = asyncio.Condition()
 
         if self._initial_hvac_mode == HVAC_MODE_HEAT:
             self._hvac_mode = HVAC_MODE_HEAT
@@ -214,7 +216,9 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
         TMODE = Packet(PACKET.COMMON_COMMAND, data=[0x3E, 0x01])
         dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, TMODE)
         dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, self.secti[0])
+        await asyncio.sleep(1)
         self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,0, MID=0, REQ=8)
+        self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
     
     def send_telegram(self, Key, RLC, SLF, destination, mid, **kwargs):
         decrypted = RadioPacket.create(rorg=RORG.VLD, rorg_func=0x33, rorg_type=0x00, destination = destination,mid=mid, **kwargs)
@@ -243,15 +247,33 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
         self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,2, MID=2, TSP=temperature)
         self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
         await self.async_update_ha_state()
+        async with self._telegram_received:
+            await asyncio.wait_for(self._telegram_received.wait(), timeout=1.0)
+            _LOGGER.debug("Acknowledge received !")
 
     def value_changed(self, packet):
+        #Async task for parsing message from the heater
+        self.hass.async_create_task(self._async_parse_telegram(packet))
+
+    async def _async_parse_telegram(self, packet):
+        _LOGGER.warning("Parsing message from the heater !")
+        
         if packet.rorg == RORG.SEC_ENCAPS:
            Decode_packet = packet.decrypt(bytearray(self.secti[1].KEY), self.RLC_RAD, self.secti[1].SLF)
            self.RLC_RAD = add_one_to_byte_list_num(self.RLC_RAD)
+           
            if Decode_packet[1] == DECRYPT_RESULT.OK:
+               
                Decode_packet[0].select_eep(0x33, 0x00)
                Decode_packet[0].parse_eep()
-               self._cur_temp = Decode_packet[0].parsed['INT']['value']
+
+               if Decode_packet[0].parsed['MID']['raw_value'] == 8:
+                    async with self._telegram_received:
+                            self._telegram_received.notify()
+                    self._cur_temp = Decode_packet[0].parsed['INT']['value']
+               
                if (Decode_packet[0].parsed['MID']['raw_value'] == 8 and (Decode_packet[0].parsed['REQ']['raw_value'] == 0 or Decode_packet[0].parsed['REQ']['raw_value'] == 4)) or Decode_packet[0].parsed['MID']['raw_value'] > 8:
                      self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,0, MID=0, REQ=15)
                      self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
+               
+               await self.async_update_ha_state()

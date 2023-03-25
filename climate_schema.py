@@ -8,7 +8,8 @@ from homeassistant.components.climate.const import (
     HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
     HVAC_MODE_HEAT_COOL,
-    SUPPORT_TARGET_TEMPERATURE)
+    SUPPORT_TARGET_TEMPERATURE,
+    SUPPORT_PRESET_MODE)
 
 #Generic
 # VERSION = '8.2'
@@ -54,7 +55,7 @@ CONF_RELATED_CLIMATE = 'related_climate'
 CONF_HVAC_OPTIONS = 'hvac_options'
 CONF_AUTO_MODE = 'auto_mode'
 CONF_MIN_CYCLE_DURATION = 'min_cycle_duration'
-SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE)
+SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE)
 
 CLIMATE_SCHEMA = {
     vol.Optional(CONF_HEATER): cv.entity_ids,
