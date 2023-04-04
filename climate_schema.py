@@ -13,7 +13,7 @@ from homeassistant.components.climate.const import (
 
 #Generic
 # VERSION = '8.2'
-# DOMAIN = 'programmable_thermostat'
+DOMAIN = 'enocean'
 PLATFORM = 'climate'
 # ISSUE_URL = 'https://github.com/custom-components/climate.programmable_thermostat/issues'
 # CONFIGFLOW_VERSION = 4
@@ -55,6 +55,10 @@ CONF_RELATED_CLIMATE = 'related_climate'
 CONF_HVAC_OPTIONS = 'hvac_options'
 CONF_AUTO_MODE = 'auto_mode'
 CONF_MIN_CYCLE_DURATION = 'min_cycle_duration'
+CONF_AWAY_PRESET_TEMP = 'away_temp'
+CONF_SLEEP_PRESET_TEMP = 'sleep_temp'
+CONF_ECO_PRESET_TEMP = 'eco_temp'
+CONF_HOME_PRESET_TEMP = 'home_temp'
 SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE)
 
 CLIMATE_SCHEMA = {

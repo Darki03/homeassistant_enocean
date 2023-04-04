@@ -5,11 +5,14 @@ import asyncio
 
 # HA imports
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback, DeviceRegistry
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.dispatcher import dispatcher_send
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.reload import async_setup_reload_service
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.components.climate.const import (
     CURRENT_HVAC_COOL,
     CURRENT_HVAC_HEAT,
@@ -17,7 +20,16 @@ from homeassistant.components.climate.const import (
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
-    HVAC_MODE_HEAT_COOL
+    PRESET_AWAY,
+    PRESET_NONE,
+    PRESET_ECO,
+    PRESET_BOOST,
+    PRESET_COMFORT,
+    PRESET_HOME,
+    PRESET_SLEEP,
+    PRESET_ACTIVITY,
+    HVAC_MODE_HEAT_COOL,
+    ATTR_PRESET_MODE
 )
 from homeassistant.const import (
     ATTR_ENTITY_ID,
@@ -66,38 +78,12 @@ from .utils import add_one_to_byte_list_num
 
 _LOGGER = logging.getLogger(__name__)
 
-# DEFAULT_NAME = "EnOcean HVAC"
-# CONF_BASE_ID = "base_id"
+
 CONF_RLC_GW_INIT = [0x00] * 3
 CONF_RLC_SENS_INIT = [0x00] * 3
-# MIN_TEMP = 5
-# MAX_TEMP = 28
-
-
-# PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-#     {
-#         vol.Required(CONF_ID): vol.All(cv.ensure_list, [vol.Coerce(int)]),
-#         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
-#         vol.Optional(CONF_BASE_ID, default=[0x00, 0x00, 0x00, 0x00]): vol.All(
-#             cv.ensure_list, [vol.Coerce(int)]
-#         ),
-#     }
-# )
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(CLIMATE_SCHEMA)
 
-
-# def setup_platform(
-#     hass: HomeAssistant,
-#     config: ConfigType,
-#     add_entities: AddEntitiesCallback,
-#     discovery_info: DiscoveryInfoType | None = None,
-# ) -> None:
-#     """Set up the EnOcean HVAC platform."""
-#     dev_id = config.get(CONF_ID)
-#     dev_name = config.get(CONF_NAME)
-#     base_id = config.get(CONF_BASE_ID, [0, 0, 0, 0])
-#     add_entities([EquationHeater(dev_id, dev_name, base_id)])
 
 async def async_setup_platform(hass, config, async_add_entities,
                                discovery_info=None):
@@ -105,7 +91,8 @@ async def async_setup_platform(hass, config, async_add_entities,
     await async_setup_reload_service(hass, DOMAIN, PLATFORM)
     async_add_entities([EquationHeater(hass, config)])
 
-class EquationHeater(EnOceanEntity, ClimateEntity):
+
+class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
     """Representation of a Equation Enocean Heater."""
     _attr_has_entity_name = True
 
@@ -127,7 +114,7 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
         self._hvac_options = config.get(CONF_HVAC_OPTIONS)
         self._auto_mode = config.get(CONF_AUTO_MODE)
         self._hvac_list = []
-        self._target_temp = 9
+        self._target_temp = None
         self._restore_temp = self._target_temp
         self._cur_temp = None
         self._active = False
@@ -145,6 +132,24 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
         else:
             self._hvac_mode = HVAC_MODE_OFF
         self._support_flags = SUPPORT_FLAGS
+
+        self._preset_mode = PRESET_NONE
+        self._saved_target_temp = 5
+        self._attributes = {}
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return DeviceInfo(
+            identifiers={
+                # Serial numbers are unique identifiers within a specific domain
+                (DOMAIN, self._attr_unique_id)
+            },
+            name=self._name,
+            manufacturer="Equation" ,
+            model="Equation",
+            sw_version="3000",
+        )
 
     @property
     def should_poll(self):
@@ -175,6 +180,20 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
     def hvac_mode(self):
         """Return current operation."""
         return self._hvac_mode
+
+    @property
+    def preset_mode(self):
+        return self._preset_mode
+    
+    @property
+    def preset_modes(self):
+        return [
+            PRESET_NONE,
+            PRESET_AWAY,
+            PRESET_ECO,
+            PRESET_SLEEP,
+            PRESET_HOME,
+        ]
 
     @property
     def target_temperature(self):
@@ -209,13 +228,47 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
 
         # Get default temp from super class
         return super().max_temp
-        
+    
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes."""
+        return self._attributes
+
     async def async_added_to_hass(self):
         """Query status after Home Assistant (re)start."""
         await super().async_added_to_hass()
+
+        # Check If we have an old state
+        old_state = await self.async_get_last_state()
+        if old_state is not None:
+            # If we have no initial temperature, restore
+            if self._target_temp is None:
+                # If we have a previously saved temperature
+                if old_state.attributes.get(ATTR_TEMPERATURE) is None:
+                    self._target_temp = self.min_temp
+                    _LOGGER.warning(
+                        "Undefined target temperature, falling back to %s",
+                        self._target_temp,
+                    )
+                else:
+                    self._target_temp = float(old_state.attributes[ATTR_TEMPERATURE])
+            if old_state.attributes.get(ATTR_PRESET_MODE) is not None:
+                self._preset_mode = old_state.attributes.get(ATTR_PRESET_MODE)
+            if not self._hvac_mode and old_state.state:
+                self._hvac_mode = old_state.state
+            for x in self.preset_modes:
+                if old_state.attributes.get(x + "_temp") is not None:
+                     self._attributes[x + "_temp"] = old_state.attributes.get(x + "_temp")
+        else:
+            # No previous state, try and restore defaults
+            if self._target_temp is None:
+                self._target_temp = self.min_temp
+            _LOGGER.warning("No previously saved temperature, setting to %s", self._target_temp)
+
+
         TMODE = Packet(PACKET.COMMON_COMMAND, data=[0x3E, 0x01])
-        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, TMODE)
-        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, self.secti[0])
+        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, TMODE) #Activate transparent mode
+        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, self.secti[0]) #Reinit RLC
         await asyncio.sleep(1)
         self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,0, MID=0, REQ=8)
         self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
@@ -236,7 +289,30 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
         elif hvac_mode == HVAC_MODE_OFF:
             self._hvac_mode = HVAC_MODE_OFF
         await self.async_update_ha_state()
+
+    async def async_set_preset_mode(self, preset_mode: str):
+        """Set new preset mode."""
+        """Test if Preset mode is valid"""
+        if not preset_mode in self.preset_modes:
+            return
+        """if old value is preset_none we store the temp"""
+        if self._preset_mode == PRESET_NONE:
+            self._saved_target_temp = self._target_temp
+        self._preset_mode = preset_mode
+        """let's deal with the new value"""
+        if self._preset_mode == PRESET_NONE:
+            self._target_temp = self._saved_target_temp
+        else:
+            temp = self._attributes.get(self._preset_mode + "_temp", self._target_temp)
+            self._target_temp = float(temp)
+            await self.async_set_temperature(temperature=temp)
+        self.async_write_ha_state()
         
+    def init_presets_temps(self):
+        for preset_mode in self.preset_modes:
+            self._attributes[preset_mode + "_temp"] = 5
+
+    
     async def async_set_temperature(self, **kwargs):
         temperature = kwargs.get(ATTR_TEMPERATURE)
         _LOGGER.warning("Setting temperature: %s", int(temperature))
@@ -246,6 +322,8 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
         self._target_temp = float(temperature)
         self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,2, MID=2, TSP=temperature)
         self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
+        if self._preset_mode != PRESET_NONE:
+            self._attributes[self._preset_mode + "_temp"] = self._target_temp
         await self.async_update_ha_state()
         async with self._telegram_received:
             await asyncio.wait_for(self._telegram_received.wait(), timeout=1.0)
@@ -256,7 +334,7 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
         self.hass.async_create_task(self._async_parse_telegram(packet))
 
     async def _async_parse_telegram(self, packet):
-        _LOGGER.warning("Parsing message from the heater !")
+        _LOGGER.debug("Parsing message from the heater !")
         
         if packet.rorg == RORG.SEC_ENCAPS:
            Decode_packet = packet.decrypt(bytearray(self.secti[1].KEY), self.RLC_RAD, self.secti[1].SLF)
@@ -271,6 +349,12 @@ class EquationHeater(EnOceanEntity, ClimateEntity):
                     async with self._telegram_received:
                             self._telegram_received.notify()
                     self._cur_temp = Decode_packet[0].parsed['INT']['value']
+                    if Decode_packet[0].parsed['HTF']['raw_value'] == 1:
+                        _LOGGER.debug("Heater is active !")
+                        self._hvac_mode = HVAC_MODE_HEAT
+                    else:
+                        _LOGGER.debug("Heater is idle !")
+                        self._hvac_mode = HVAC_MODE_OFF
                
                if (Decode_packet[0].parsed['MID']['raw_value'] == 8 and (Decode_packet[0].parsed['REQ']['raw_value'] == 0 or Decode_packet[0].parsed['REQ']['raw_value'] == 4)) or Decode_packet[0].parsed['MID']['raw_value'] > 8:
                      self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,0, MID=0, REQ=15)
