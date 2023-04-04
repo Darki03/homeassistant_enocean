@@ -4,15 +4,19 @@ import logging
 from os.path import basename, normpath
 
 from enoceanjob.communicators import SerialCommunicator
+from homeassistant.helpers.reload import async_setup_reload_service
 from enoceanjob.protocol.packet import RadioPacket
+from enoceanjob.utils import combine_hex
 import serial
 
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, dispatcher_send
+from homeassistant import core
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.const import CONF_DEVICE
 
-from .const import SIGNAL_RECEIVE_MESSAGE, SIGNAL_SEND_MESSAGE
+from .const import SIGNAL_RECEIVE_MESSAGE, SIGNAL_SEND_MESSAGE, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-
 
 class EnOceanDongle:
     """Representation of an EnOcean dongle.
@@ -20,18 +24,20 @@ class EnOceanDongle:
     The dongle is responsible for receiving the ENOcean frames,
     creating devices if needed, and dispatching messages to platforms.
     """
+    
 
-    def __init__(self, hass, serial_path):
+    def __init__(self, hass: core.HomeAssistant, config_entry: ConfigEntry):
         """Initialize the EnOcean dongle."""
-
+        self.config_entry = config_entry
         self._communicator = SerialCommunicator(
-            port=serial_path, callback=self.callback
+            port=config_entry.data[CONF_DEVICE], callback=self.callback
         )
-        self.serial_path = serial_path
-        self.identifier = basename(normpath(serial_path))
+        self.serial_path = config_entry.data[CONF_DEVICE]
+        self.identifier = basename(normpath(config_entry.data[CONF_DEVICE]))
         self.hass = hass
         self.dispatcher_disconnect_handle = None
-
+        hass.data.setdefault(DOMAIN, {})[self.config_entry.entry_id] = self
+    
     async def async_setup(self):
         """Finish the setup of the bridge and supported platforms."""
         self._communicator.start()
