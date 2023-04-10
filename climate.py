@@ -91,6 +91,17 @@ async def async_setup_platform(hass, config, async_add_entities,
     await async_setup_reload_service(hass, DOMAIN, PLATFORM)
     async_add_entities([EquationHeater(hass, config)])
 
+async def async_setup_entry(hass, config_entry, async_add_devices):
+    """Add ProgrammableThermostat entities from configuration flow."""
+
+    result = config_entry.options
+    if result == {}:
+        return
+    for climate_devices in result['devices'].keys():
+        _LOGGER.info("setup entity-config_entry_data=%s",result['devices'][climate_devices])
+        #await async_setup_reload_service(hass, DOMAIN, PLATFORM)
+        async_add_devices([EquationHeater(hass, result['devices'][climate_devices])])
+
 
 class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
     """Representation of a Equation Enocean Heater."""
@@ -101,7 +112,7 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
         super().__init__(config.get(CONF_ID), config.get(CONF_NAME))
         self.dev_id = config.get(CONF_ID)
         self._attr_unique_id = f"{combine_hex(self.dev_id)}"
-        self.secti = SECTeachInPacket.create_SECTI_chain(SLF=0x8B, destination=config.get(CONF_ID))
+        self.secti = SECTeachInPacket.create_SECTI_chain(Key=list(bytearray.fromhex("869FAB7D296C9E48CEBFF34DF637358A")), SLF=0x8B, destination=config.get(CONF_ID))
         self.RLC_GW = CONF_RLC_GW_INIT
         self.RLC_RAD = CONF_RLC_SENS_INIT
         self.hass = hass
@@ -259,6 +270,10 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
             for x in self.preset_modes:
                 if old_state.attributes.get(x + "_temp") is not None:
                      self._attributes[x + "_temp"] = old_state.attributes.get(x + "_temp")
+            # if old_state.attributes.get['RLC_GW'] is not None:
+            #     self.RLC_GW = old_state.attributes.get['RLC_GW']
+            # if old_state.attributes.get['RLC_RAD'] is not None:
+            #     self.RLC_GW = old_state.attributes.get['RLC_RAD']
         else:
             # No previous state, try and restore defaults
             if self._target_temp is None:
@@ -272,6 +287,7 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
         await asyncio.sleep(1)
         self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,0, MID=0, REQ=8)
         self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
+        self._attributes['RLC_GW'] = self.RLC_GW
     
     def send_telegram(self, Key, RLC, SLF, destination, mid, **kwargs):
         decrypted = RadioPacket.create(rorg=RORG.VLD, rorg_func=0x33, rorg_type=0x00, destination = destination,mid=mid, **kwargs)
@@ -322,6 +338,7 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
         self._target_temp = float(temperature)
         self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,2, MID=2, TSP=temperature)
         self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
+        self._attributes['RLC_GW'] = self.RLC_GW
         if self._preset_mode != PRESET_NONE:
             self._attributes[self._preset_mode + "_temp"] = self._target_temp
         await self.async_update_ha_state()
@@ -339,6 +356,7 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
         if packet.rorg == RORG.SEC_ENCAPS:
            Decode_packet = packet.decrypt(bytearray(self.secti[1].KEY), self.RLC_RAD, self.secti[1].SLF)
            self.RLC_RAD = add_one_to_byte_list_num(self.RLC_RAD)
+           self._attributes['RLC_RAD'] = self.RLC_RAD
            
            if Decode_packet[1] == DECRYPT_RESULT.OK:
                
@@ -359,5 +377,6 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
                if (Decode_packet[0].parsed['MID']['raw_value'] == 8 and (Decode_packet[0].parsed['REQ']['raw_value'] == 0 or Decode_packet[0].parsed['REQ']['raw_value'] == 4)) or Decode_packet[0].parsed['MID']['raw_value'] > 8:
                      self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,0, MID=0, REQ=15)
                      self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
+                     self._attributes['RLC_GW'] = self.RLC_GW
                
                await self.async_update_ha_state()

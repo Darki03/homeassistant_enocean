@@ -35,6 +35,11 @@ CONF_RELATED_CLIMATE = 'related_climate'
 CONF_HVAC_OPTIONS = 'hvac_options'
 CONF_AUTO_MODE = 'auto_mode'
 CONF_MIN_CYCLE_DURATION = 'min_cycle_duration'
+CONF_SEC_TI_KEY = 'sec_ti_key'
+CONF_RLC = 'sec_ti_rlc'
+CONF_DEVICE_TYPE = 'device_type'
+CONF_DEVICE_TYPES = ['climate', 'sensor']
+CONF_ADDED_DEVICE = 'added_device'
 SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE)
 
 CLIMATE_SCHEMA = {

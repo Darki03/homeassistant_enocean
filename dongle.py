@@ -5,7 +5,7 @@ from os.path import basename, normpath
 
 from enoceanjob.communicators import SerialCommunicator
 from homeassistant.helpers.reload import async_setup_reload_service
-from enoceanjob.protocol.packet import RadioPacket
+from enoceanjob.protocol.packet import RadioPacket, SECTeachInPacket
 from enoceanjob.utils import combine_hex
 import serial
 
@@ -51,6 +51,7 @@ class EnOceanDongle:
         if self.dispatcher_disconnect_handle:
             self.dispatcher_disconnect_handle()
             self.dispatcher_disconnect_handle = None
+        self._communicator.stop()
 
     def _send_message_callback(self, command):
         """Send a command through the EnOcean dongle."""
@@ -62,6 +63,11 @@ class EnOceanDongle:
     def send_message(self, command):
         """Send a command through the EnOcean dongle (public)."""
         self._communicator.send(command)
+
+    def send_sec_ti(self, Key, RLC, destination):
+        SEC_TI_TELEGRAM = SECTeachInPacket.create_SECTI_chain(Key=Key, RLC=RLC, SLF=0x8B, destination=destination)
+        self._communicator.send_list(SEC_TI_TELEGRAM[0])
+
 
     @property
     def communicator(self):

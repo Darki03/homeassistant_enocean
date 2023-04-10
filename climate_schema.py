@@ -62,16 +62,17 @@ CONF_HOME_PRESET_TEMP = 'home_temp'
 SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE)
 
 CLIMATE_SCHEMA = {
-    vol.Optional(CONF_HEATER): cv.entity_ids,
-    vol.Optional(CONF_COOLER): cv.entity_ids,
     vol.Optional(CONF_MAX_TEMP, default=DEFAULT_MAX_TEMP): vol.Coerce(float),
     vol.Optional(CONF_MIN_TEMP, default=DEFAULT_MIN_TEMP): vol.Coerce(float),
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
     vol.Required(CONF_ID): vol.All(cv.ensure_list, [vol.Coerce(int)]),
-    vol.Optional(CONF_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
-    vol.Optional(CONF_RELATED_CLIMATE): cv.entity_ids,
     vol.Optional(CONF_HVAC_OPTIONS, default=DEFAULT_HVAC_OPTIONS): vol.In(range(MAX_HVAC_OPTIONS)),
-    vol.Optional(CONF_AUTO_MODE, default=DEFAULT_AUTO_MODE): vol.In(AUTO_MODE_OPTIONS),
     vol.Optional(CONF_INITIAL_HVAC_MODE, default=HVAC_MODE_OFF): vol.In(INITIAL_HVAC_MODE_OPTIONS),
-    vol.Optional(CONF_MIN_CYCLE_DURATION): cv.positive_time_period
+}
+
+CLIMATE_SCHEMA_FLOW = {
+    vol.Required(CONF_ID): str,
+    vol.Optional(CONF_MAX_TEMP, default=DEFAULT_MAX_TEMP): int,
+    vol.Optional(CONF_MIN_TEMP, default=DEFAULT_MIN_TEMP): int,
+    vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
 }

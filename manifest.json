@@ -2,7 +2,7 @@
   "domain": "enocean",
   "name": "EnOcean",
   "documentation": "https://www.home-assistant.io/integrations/enocean",
-  "requirements": ["git+https://github.com/Darki03/enocean_job.git@master#enocean_job==0.60.5"],
+  "requirements": ["git+https://github.com/Darki03/enocean_job.git@master#enocean_job==0.60.8"],
   "codeowners": ["@bdurrer"],
   "config_flow": true,
   "iot_class": "local_push",

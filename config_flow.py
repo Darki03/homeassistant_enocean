@@ -3,14 +3,16 @@
 import voluptuous as vol
 import logging
 import re
+from typing import Any, TypedDict, cast
 from homeassistant import config_entries
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 from datetime import timedelta, datetime
-from homeassistant.const import CONF_DEVICE
+from homeassistant.const import CONF_DEVICE, CONF_DEVICES
+from enoceanjob.utils import to_hex_string
 
 from . import dongle
-from .const import DOMAIN, ERROR_INVALID_DONGLE_PATH, LOGGER, REGEX_STRING
+from .const import DOMAIN, ERROR_INVALID_DONGLE_PATH, LOGGER, REGEX_STRING, PLATFORMS
 
 from .config_schema import (
     get_config_flow_schema,
@@ -22,14 +24,24 @@ from .config_schema import (
     CONF_TARGET,
     CONF_TOLERANCE,
     CONF_RELATED_CLIMATE,
-    CONF_MIN_CYCLE_DURATION
+    CONF_MIN_CYCLE_DURATION,
+    CONF_SEC_TI_KEY,
+    CONF_RLC,
+    CONF_ADDED_DEVICE,
+    CONF_DEVICE_TYPE,
+    CONF_DEVICE_TYPES
 )
+
+from .climate_schema import CLIMATE_SCHEMA_FLOW,CONF_NAME, DEFAULT_NAME, CONF_ID, DEFAULT_MIN_TEMP, DEFAULT_MAX_TEMP
+
 from .helpers import (
 are_entities_valid,
 string_to_list,
 string_to_timedelta,
 null_data_cleaner
 )
+
+DEFAULT_CONF_ID = "[0x00,0x00,0x00,0x00]"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -139,36 +151,78 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Initialize."""
         self._errors = {}
         self._data = {}
+        self._created_device: dict[str, Any] = {}
         self.config_entry = config_entry
         if self.config_entry.options == {}:
             self._data.update(self.config_entry.data)
+            self._data.setdefault(CONF_ADDED_DEVICE,"")
+            self._data.setdefault(CONF_DEVICES,{})
+            _LOGGER.debug("_data to start options void flow: %s", self._data)
         else:
             self._data.update(self.config_entry.options)
-        _LOGGER.debug("_data to start options flow: %s", self._data)
+            _LOGGER.debug("_data to start options flow: %s", self._data)
+        
 
     async def async_step_init(self, user_input={}):
-        """Propose a list of detected dongles."""
-        errors = {}
+        self._errors = {}
+
         if user_input is not None:
-            if await self.validate_enocean_conf(user_input):
-                return self.async_create_entry(title="", data={CONF_DEVICE: user_input})
-            errors = {CONF_DEVICE: ERROR_INVALID_DONGLE_PATH}
+            if climate_step_valid(self, user_input):
+                user_input[CONF_ID] = eval(user_input[CONF_ID])
+                user_input.update({CONF_SEC_TI_KEY: list(bytearray.fromhex("869FAB7D296C9E48CEBFF34DF637358A"))})
+                user_input.update({CONF_RLC: [0x00] * 3})
+                self._created_device = { to_hex_string(user_input[CONF_ID]) : user_input }
+                #self._data.update({'devices' : self._created_device})
+                #self._data.update(self._created_device)
+                self._data[CONF_ADDED_DEVICE] = to_hex_string(user_input[CONF_ID])
+                self._data[CONF_DEVICES].update(self._created_device)
 
-        bridges = await self.hass.async_add_executor_job(dongle.detect)
-        if len(bridges) == 0:
-            return
+                _LOGGER.debug("_data to create_entry: %s", self._data)
+                return self.async_create_entry(title="", data=self._data)
+            return await self.show_config_climate(user_input)
+        _LOGGER.info("Show climate form before validation")
+        return await self.show_config_climate(user_input)
 
-        bridges.append(self.MANUAL_PATH_VALUE)
+    async def show_config_climate(self, user_input):
+        """ Show form for config flow """
+        _LOGGER.info("Show climate form")
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({vol.Required(CONF_DEVICE): vol.In(bridges)}),
-            errors=errors,
+            data_schema=vol.Schema({
+                vol.Required(CONF_ID, default=DEFAULT_CONF_ID): str,
+                vol.Required(CONF_DEVICE_TYPE, default=PLATFORMS[-1]): vol.In(PLATFORMS),
+                vol.Optional(CONF_MAX_TEMP, default=DEFAULT_MAX_TEMP): int,
+                vol.Optional(CONF_MIN_TEMP, default=DEFAULT_MIN_TEMP): int,
+                vol.Optional(CONF_NAME, default=DEFAULT_NAME): str}),
+            errors=self._errors
         )
+
+def climate_step_valid(self, user_input):
+    return True
+
+    # async def async_step_init(self, user_input={}):
+    #     """Propose a list of detected dongles."""
+    #     errors = {}
+    #     if user_input is not None:
+    #         if await self.validate_enocean_conf(user_input):
+    #             return self.async_create_entry(title="", data={CONF_DEVICE: user_input})
+    #         errors = {CONF_DEVICE: ERROR_INVALID_DONGLE_PATH}
+
+    #     bridges = await self.hass.async_add_executor_job(dongle.detect)
+    #     if len(bridges) == 0:
+    #         return
+
+    #     bridges.append(self.MANUAL_PATH_VALUE)
+    #     return self.async_show_form(
+    #         step_id="init",
+    #         data_schema=vol.Schema({vol.Required(CONF_DEVICE): vol.In(bridges)}),
+    #         errors=errors,
+    #     )
     
-    async def validate_enocean_conf(self, user_input) -> bool:
-        """Return True if the user_input contains a valid dongle path."""
-        dongle_path = user_input[CONF_DEVICE]
-        path_is_valid = await self.hass.async_add_executor_job(
-            dongle.validate_path, dongle_path
-        )
-        return path_is_valid
+    # async def validate_enocean_conf(self, user_input) -> bool:
+    #     """Return True if the user_input contains a valid dongle path."""
+    #     dongle_path = user_input[CONF_DEVICE]
+    #     path_is_valid = await self.hass.async_add_executor_job(
+    #         dongle.validate_path, dongle_path
+    #     )
+    #     return path_is_valid
