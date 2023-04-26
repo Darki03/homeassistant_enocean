@@ -41,7 +41,7 @@ class EnOceanDongle:
     async def async_setup(self):
         """Finish the setup of the bridge and supported platforms."""
         self._communicator.start()
-        self._communicator.base_id = [0x00] * 4
+        self._communicator.get_dongle_info()
         self.dispatcher_disconnect_handle = async_dispatcher_connect(
             self.hass, SIGNAL_SEND_MESSAGE, self._send_message_callback
         )

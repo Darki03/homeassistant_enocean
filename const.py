@@ -14,12 +14,18 @@ SIGNAL_SEND_MESSAGE = "enocean.send_message"
 
 LOGGER = logging.getLogger(__package__)
 
+# PLATFORMS = [
+#     Platform.LIGHT,
+#     Platform.BINARY_SENSOR,
+#     Platform.SENSOR,
+#     Platform.SWITCH,
+#     Platform.CLIMATE
+# ]
+
 PLATFORMS = [
-    Platform.LIGHT,
-    Platform.BINARY_SENSOR,
-    Platform.SENSOR,
-    Platform.SWITCH,
-    Platform.CLIMATE
+    Platform.CLIMATE,
+    Platform.SENSOR
 ]
+
 
 REGEX_STRING = r'((?P<hours>\d+?):(?=(\d+?:\d+?)))?((?P<minutes>\d+?):)?((?P<seconds>\d+?))?$'

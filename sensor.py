@@ -1,6 +1,7 @@
 """Support for EnOcean sensors."""
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -23,14 +24,23 @@ from homeassistant.const import (
     STATE_CLOSED,
     STATE_OPEN,
     TEMP_CELSIUS,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    CONF_DEVICE,
+    CONF_DEVICES,
+    EntityCategory
 )
 from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-
+from .config_schema import CONF_DEVICE_TYPE, CONF_SEC_TI_KEY
+from .const import DOMAIN
 from .device import EnOceanEntity
+
+_LOGGER = logging.getLogger(__name__)
 
 CONF_MAX_TEMP = "max_temp"
 CONF_MIN_TEMP = "min_temp"
@@ -44,6 +54,7 @@ SENSOR_TYPE_POWER = "powersensor"
 SENSOR_TYPE_TEMPERATURE = "temperature"
 SENSOR_TYPE_WINDOWHANDLE = "windowhandle"
 SENSOR_TYPE_DOORDETECTOR = "doordetector"
+SENSOR_TYPE_DBM = "dbmlevel"
 
 @dataclass
 class EnOceanSensorEntityDescriptionMixin:
@@ -57,6 +68,17 @@ class EnOceanSensorEntityDescription(
     SensorEntityDescription, EnOceanSensorEntityDescriptionMixin
 ):
     """Describes EnOcean sensor entity."""
+
+
+SENSOR_DESC_DBM = EnOceanSensorEntityDescription(
+    key=SENSOR_TYPE_DBM,
+    name="Signal strength",
+    native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+    state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    unique_id=lambda dev_id: f"{combine_hex(dev_id)}-{SENSOR_TYPE_DBM}",
+)
 
 
 SENSOR_DESC_TEMPERATURE = EnOceanSensorEntityDescription(
@@ -161,6 +183,27 @@ def setup_platform(
         add_entities(entities)
 
 
+async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
+    config_entities_list = []
+    result = config_entry.data
+
+    if result == {}:
+        return
+    for device in result[CONF_DEVICES].keys():
+        if result[CONF_DEVICES][device][CONF_DEVICE_TYPE] == 'climate':
+            _LOGGER.info("setup entity-config_entry_data=%s",result[CONF_DEVICES][device])
+            config_entity_signal = EnOceanSignalSensor(result[CONF_DEVICES][device])
+            config_entities_list.append(config_entity_signal)
+
+    if len(config_entities_list) != 0:
+        async_add_entities(config_entities_list, True)
+        _LOGGER.debug("sensor:async_setup_platform exit - created [%d] entitites", len(config_entities_list))
+    else:
+        _LOGGER.error("sensor:async_setup_platform exit - no climate entities found")
+    return True
+
+
+
 class EnOceanSensor(EnOceanEntity, RestoreEntity, SensorEntity):
     """Representation of an  EnOcean sensor device such as a power meter."""
 
@@ -168,7 +211,7 @@ class EnOceanSensor(EnOceanEntity, RestoreEntity, SensorEntity):
         """Initialize the EnOcean sensor device."""
         super().__init__(dev_id, dev_name)
         self.entity_description = description
-        self._attr_name = f"{description.name} {dev_name}"
+        self._attr_name = f"{description.name}"
         self._attr_unique_id = description.unique_id(dev_id)
 
     async def async_added_to_hass(self):
@@ -184,6 +227,19 @@ class EnOceanSensor(EnOceanEntity, RestoreEntity, SensorEntity):
     def value_changed(self, packet):
         """Update the internal state of the sensor."""
 
+    def received_signal_strength(self, dbm:int =0):
+        """Get signal strength"""
+
+
+class EnOceanSignalSensor(EnOceanSensor):
+    """Representation of an EnOcean signal stregth sensor for a device"""
+    
+    def __init__(self, config):
+        super().__init__(config.get(CONF_ID), config.get(CONF_NAME), SENSOR_DESC_DBM)
+
+    def received_signal_strength(self, dbm:int =0):
+        self._attr_native_value = dbm
+        self.schedule_update_ha_state()
 
 class EnOceanPowerSensor(EnOceanSensor):
     """Representation of an EnOcean power sensor.

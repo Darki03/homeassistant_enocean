@@ -2,37 +2,34 @@
 
 import voluptuous as vol
 import logging
+import copy
 import re
 from typing import Any, TypedDict, cast
 from homeassistant import config_entries
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 from datetime import timedelta, datetime
-from homeassistant.const import CONF_DEVICE, CONF_DEVICES
+from homeassistant.const import CONF_DEVICE, CONF_DEVICES, CONF_ID
 from enoceanjob.utils import to_hex_string
 
 from . import dongle
-from .const import DOMAIN, ERROR_INVALID_DONGLE_PATH, LOGGER, REGEX_STRING, PLATFORMS
+from .const import DOMAIN, ERROR_INVALID_DONGLE_PATH, LOGGER, PLATFORMS
 
 from .config_schema import (
-    get_config_flow_schema,
-    CONF_HEATER,
-    CONF_COOLER,
-    CONF_SENSOR,
+    CONF_NAME,
+    DEFAULT_CONF_ID,
+    DEFAULT_NAME,
+    DEFAULT_MIN_TEMP,
+    DEFAULT_MAX_TEMP,
     CONF_MIN_TEMP,
     CONF_MAX_TEMP,
-    CONF_TARGET,
-    CONF_TOLERANCE,
-    CONF_RELATED_CLIMATE,
-    CONF_MIN_CYCLE_DURATION,
     CONF_SEC_TI_KEY,
     CONF_RLC,
     CONF_ADDED_DEVICE,
     CONF_DEVICE_TYPE,
-    CONF_DEVICE_TYPES
 )
 
-from .climate_schema import CLIMATE_SCHEMA_FLOW,CONF_NAME, DEFAULT_NAME, CONF_ID, DEFAULT_MIN_TEMP, DEFAULT_MAX_TEMP
+PLATFORMS_DICT = {ptf:ptf for ptf in PLATFORMS}
 
 from .helpers import (
 are_entities_valid,
@@ -41,10 +38,10 @@ string_to_timedelta,
 null_data_cleaner
 )
 
-DEFAULT_CONF_ID = "[0x00,0x00,0x00,0x00]"
-
 _LOGGER = logging.getLogger(__name__)
 
+#Implements the integrations config_flow:
+#EnOcean dongle configuration
 @config_entries.HANDLERS.register(DOMAIN)
 class EnOceanFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the enOcean config flows."""
@@ -66,7 +63,7 @@ class EnOceanFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 data[CONF_DEVICE],
             )
             return self.async_abort(reason="invalid_dongle_path")
-
+        data[CONF_DEVICES] = {}
         return self.create_enocean_entry(data)
 
     async def async_step_user(self, user_input=None):
@@ -83,6 +80,7 @@ class EnOceanFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             if user_input[CONF_DEVICE] == self.MANUAL_PATH_VALUE:
                 return await self.async_step_manual(None)
             if await self.validate_enocean_conf(user_input):
+                user_input[CONF_DEVICES] = {}
                 return self.create_enocean_entry(user_input)
             errors = {CONF_DEVICE: ERROR_INVALID_DONGLE_PATH}
 
@@ -103,6 +101,7 @@ class EnOceanFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             if await self.validate_enocean_conf(user_input):
+                user_input[CONF_DEVICES] = {}
                 return self.create_enocean_entry(user_input)
             default_value = user_input[CONF_DEVICE]
             errors = {CONF_DEVICE: ERROR_INVALID_DONGLE_PATH}
@@ -143,8 +142,9 @@ class EmptyOptions(config_entries.OptionsFlow):
         """Just set the config_entry parameter."""
         self.config_entry = config_entry
 
+#Implements the EnOcean integration option flow
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Programmable Thermostat option flow."""
+    """EnOcean integration option flow."""
     MANUAL_PATH_VALUE = "Custom path"
 
     def __init__(self, config_entry):
@@ -152,15 +152,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         self._errors = {}
         self._data = {}
         self._created_device: dict[str, Any] = {}
-        self.config_entry = config_entry
-        if self.config_entry.options == {}:
-            self._data.update(self.config_entry.data)
-            self._data.setdefault(CONF_ADDED_DEVICE,"")
-            self._data.setdefault(CONF_DEVICES,{})
-            _LOGGER.debug("_data to start options void flow: %s", self._data)
-        else:
-            self._data.update(self.config_entry.options)
-            _LOGGER.debug("_data to start options flow: %s", self._data)
+        self._config_entry = config_entry
+
+        #Copy start config
+        self._data = self._config_entry.data.copy()
+        self._data[CONF_DEVICES] = copy.deepcopy(self._config_entry.data[CONF_DEVICES])
+
         
 
     async def async_step_init(self, user_input={}):
@@ -171,14 +168,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 user_input[CONF_ID] = eval(user_input[CONF_ID])
                 user_input.update({CONF_SEC_TI_KEY: list(bytearray.fromhex("869FAB7D296C9E48CEBFF34DF637358A"))})
                 user_input.update({CONF_RLC: [0x00] * 3})
-                self._created_device = { to_hex_string(user_input[CONF_ID]) : user_input }
-                #self._data.update({'devices' : self._created_device})
-                #self._data.update(self._created_device)
+                enocean_id = to_hex_string(user_input[CONF_ID])
+                
+                self._data[CONF_DEVICES][enocean_id] = user_input
                 self._data[CONF_ADDED_DEVICE] = to_hex_string(user_input[CONF_ID])
-                self._data[CONF_DEVICES].update(self._created_device)
+                _LOGGER.debug("_data to update config entry: %s", self._data)
+                self.hass.config_entries.async_update_entry(self._config_entry, data=self._data)
 
-                _LOGGER.debug("_data to create_entry: %s", self._data)
-                return self.async_create_entry(title="", data=self._data)
+                return self.async_create_entry(title="", data={})
             return await self.show_config_climate(user_input)
         _LOGGER.info("Show climate form before validation")
         return await self.show_config_climate(user_input)

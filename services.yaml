@@ -22,3 +22,14 @@ teach_in_device:
       advanced: true
       example: 01BEEF23
       default: ""
+reset_rlc:
+  name: Reset secure RLC
+  description: Reset secure RLC to defined value
+  target:
+    entity:
+      integration: enocean
+      domain: climate
+  fields:
+    rlc:
+      name: RLC
+      description: RLC to set

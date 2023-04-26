@@ -6,13 +6,15 @@ import asyncio
 # HA imports
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback, DeviceRegistry
-from homeassistant.helpers.entity import DeviceInfo
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.dispatcher import dispatcher_send
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers import entity_platform as ep
 from homeassistant.helpers.reload import async_setup_reload_service
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers import entity_component
 from homeassistant.components.climate.const import (
     CURRENT_HVAC_COOL,
     CURRENT_HVAC_HEAT,
@@ -36,6 +38,7 @@ from homeassistant.const import (
     ATTR_TEMPERATURE,
     CONF_NAME,
     CONF_ID,
+    CONF_DEVICES,
     EVENT_HOMEASSISTANT_START,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
@@ -44,6 +47,8 @@ from homeassistant.const import (
     STATE_UNKNOWN,
     STATE_UNAVAILABLE
 )
+
+from .config_schema import CONF_DEVICE_TYPE, CONF_SEC_TI_KEY
 
 # Climate specific imports
 from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateEntity
@@ -69,12 +74,13 @@ from .climate_schema import(
 )
 
 # Enocean integration specific integrations
-from enoceanjob.utils import combine_hex
+from enoceanjob.utils import combine_hex, to_hex_string
 from enoceanjob.protocol.constants import RORG, DECRYPT_RESULT, PACKET
 from enoceanjob.protocol.packet import SECTeachInPacket, RadioPacket, ChainedMSG, Packet
 from .device import EnOceanEntity
-from .const import SIGNAL_SEND_MESSAGE, DOMAIN
+from .const import SIGNAL_SEND_MESSAGE, DOMAIN, ENOCEAN_DONGLE
 from .utils import add_one_to_byte_list_num
+from .dongle import EnOceanDongle
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,32 +97,54 @@ async def async_setup_platform(hass, config, async_add_entities,
     await async_setup_reload_service(hass, DOMAIN, PLATFORM)
     async_add_entities([EquationHeater(hass, config)])
 
-async def async_setup_entry(hass, config_entry, async_add_devices):
-    """Add ProgrammableThermostat entities from configuration flow."""
+async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
+    """Add climate entities from configuration flow."""
+    climate_list = []
+    result = config_entry.data
 
-    result = config_entry.options
+    await async_setup_reload_service(hass, DOMAIN, PLATFORM)
+
     if result == {}:
         return
-    for climate_devices in result['devices'].keys():
-        _LOGGER.info("setup entity-config_entry_data=%s",result['devices'][climate_devices])
-        #await async_setup_reload_service(hass, DOMAIN, PLATFORM)
-        async_add_devices([EquationHeater(hass, result['devices'][climate_devices])])
+    for device in result[CONF_DEVICES].keys():
+        if result[CONF_DEVICES][device][CONF_DEVICE_TYPE] == 'climate':
+            _LOGGER.info("setup entity-config_entry_data=%s",result[CONF_DEVICES][device])
+            climate = EquationHeater(hass, result[CONF_DEVICES][device])
+            climate_list.append(climate)
+
+    #Register entity service for reset RLC
+    platform = ep.async_get_current_platform()
+    platform.async_register_entity_service(
+        "reset_rlc",
+        {
+            vol.Required("rlc", default=[0x00,0x00,0x00]): cv.ensure_list,
+        },
+        "async_reset_rlc",
+    )
+
+    if len(climate_list) != 0:
+        async_add_entities(climate_list, True)
+        _LOGGER.debug("climate:async_setup_platform exit - created [%d] entitites", len(climate_list))
+    else:
+        _LOGGER.error("climate:async_setup_platform exit - no climate entities found")
+    return True
 
 
 class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
     """Representation of a Equation Enocean Heater."""
-    _attr_has_entity_name = True
 
     def __init__(self, hass, config):
         """Initialize the EnOcean Heater device."""
         super().__init__(config.get(CONF_ID), config.get(CONF_NAME))
+        self.usb_dongle: EnOceanDongle
+        self.usb_dongle = hass.data[DOMAIN].get(ENOCEAN_DONGLE)
         self.dev_id = config.get(CONF_ID)
-        self._attr_unique_id = f"{combine_hex(self.dev_id)}"
-        self.secti = SECTeachInPacket.create_SECTI_chain(Key=list(bytearray.fromhex("869FAB7D296C9E48CEBFF34DF637358A")), SLF=0x8B, destination=config.get(CONF_ID))
+        self._attr_unique_id = f"{combine_hex(self.dev_id)}-{'heater'}"
+        self._attr_name = f"{'Heater'}"
+        self._sec_ti_key = config.get(CONF_SEC_TI_KEY)
         self.RLC_GW = CONF_RLC_GW_INIT
         self.RLC_RAD = CONF_RLC_SENS_INIT
         self.hass = hass
-        self._name = config.get(CONF_NAME)
         self._tolerance = config.get(CONF_TOLERANCE)
         self._min_temp = config.get(CONF_MIN_TEMP)
         self._max_temp = config.get(CONF_MAX_TEMP)
@@ -149,28 +177,9 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
         self._attributes = {}
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device info."""
-        return DeviceInfo(
-            identifiers={
-                # Serial numbers are unique identifiers within a specific domain
-                (DOMAIN, self._attr_unique_id)
-            },
-            name=self._name,
-            manufacturer="Equation" ,
-            model="Equation",
-            sw_version="3000",
-        )
-
-    @property
     def should_poll(self):
         """Return the polling state."""
         return False
-
-    @property
-    def name(self):
-        """Return the name of the thermostat."""
-        return self._name
 
     @property
     def supported_features(self):
@@ -270,10 +279,14 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
             for x in self.preset_modes:
                 if old_state.attributes.get(x + "_temp") is not None:
                      self._attributes[x + "_temp"] = old_state.attributes.get(x + "_temp")
-            # if old_state.attributes.get['RLC_GW'] is not None:
-            #     self.RLC_GW = old_state.attributes.get['RLC_GW']
-            # if old_state.attributes.get['RLC_RAD'] is not None:
-            #     self.RLC_GW = old_state.attributes.get['RLC_RAD']
+            if old_state.attributes.get('RLC_GW') is not None:
+                self._attributes['RLC_GW'] = old_state.attributes.get('RLC_GW')
+                self.RLC_GW = self._attributes['RLC_GW']
+                _LOGGER.debug("RLC_GW old_state is : %s !", to_hex_string(old_state.attributes.get('RLC_GW')))
+            if old_state.attributes.get('RLC_RAD') is not None:
+                self._attributes['RLC_RAD'] = old_state.attributes.get('RLC_RAD')
+                self.RLC_RAD = self._attributes['RLC_RAD']
+                _LOGGER.debug("RLC_RAD old_state is : %s !", to_hex_string(old_state.attributes.get('RLC_RAD')))
         else:
             # No previous state, try and restore defaults
             if self._target_temp is None:
@@ -283,15 +296,21 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
 
         TMODE = Packet(PACKET.COMMON_COMMAND, data=[0x3E, 0x01])
         dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, TMODE) #Activate transparent mode
-        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, self.secti[0]) #Reinit RLC
+        #dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, self.secti[0]) #Reinit RLC
         await asyncio.sleep(1)
-        self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,0, MID=0, REQ=8)
+        _LOGGER.debug("RLC_GW: %s !", to_hex_string(self.RLC_GW))
+        self.send_telegram(bytearray(self._sec_ti_key), self.RLC_GW, self.dev_id,0, MID=0, REQ=8) #Request information
         self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
         self._attributes['RLC_GW'] = self.RLC_GW
     
-    def send_telegram(self, Key, RLC, SLF, destination, mid, **kwargs):
+    async def async_will_remove_from_hass(self):
+        _LOGGER.debug("Remove entity : %s", self.dev_name)
+        self.async_removed_from_registry
+
+
+    def send_telegram(self, Key, RLC, destination, mid, **kwargs):
         decrypted = RadioPacket.create(rorg=RORG.VLD, rorg_func=0x33, rorg_type=0x00, destination = destination,mid=mid, **kwargs)
-        encrypted = decrypted.encrypt(Key,RLC,SLF)
+        encrypted = decrypted.encrypt(Key,RLC,SLF_TI=0x8B)
         if len(encrypted.data) > 15:
           encrypted = ChainedMSG.create_CDM(encrypted,CDM_RORG=RORG.CDM)
         dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, encrypted)
@@ -336,11 +355,13 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
             _LOGGER.error("Wrong temperature: %s", temperature)
             return
         self._target_temp = float(temperature)
-        self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,2, MID=2, TSP=temperature)
+        _LOGGER.debug("RLC_GW: %s !", to_hex_string(self.RLC_GW))
+        self.send_telegram(bytearray(self._sec_ti_key), self.RLC_GW, self.dev_id,2, MID=2, TSP=temperature)
         self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
         self._attributes['RLC_GW'] = self.RLC_GW
         if self._preset_mode != PRESET_NONE:
             self._attributes[self._preset_mode + "_temp"] = self._target_temp
+        self.async_write_ha_state()
         await self.async_update_ha_state()
         async with self._telegram_received:
             await asyncio.wait_for(self._telegram_received.wait(), timeout=1.0)
@@ -350,12 +371,13 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
         #Async task for parsing message from the heater
         self.hass.async_create_task(self._async_parse_telegram(packet))
 
-    async def _async_parse_telegram(self, packet):
+    async def _async_parse_telegram(self, packet: RadioPacket):
         _LOGGER.debug("Parsing message from the heater !")
         
         if packet.rorg == RORG.SEC_ENCAPS:
-           Decode_packet = packet.decrypt(bytearray(self.secti[1].KEY), self.RLC_RAD, self.secti[1].SLF)
-           self.RLC_RAD = add_one_to_byte_list_num(self.RLC_RAD)
+           _LOGGER.debug("RLC_RAD: %s !", to_hex_string(self.RLC_RAD))
+           Decode_packet = packet.decrypt(bytearray(self._sec_ti_key), self.RLC_RAD, SLF_TI=0x8B)
+           self.RLC_RAD = add_one_to_byte_list_num(Decode_packet[2]) if Decode_packet[1] == DECRYPT_RESULT.OK else self.RLC_RAD
            self._attributes['RLC_RAD'] = self.RLC_RAD
            
            if Decode_packet[1] == DECRYPT_RESULT.OK:
@@ -375,8 +397,15 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
                         self._hvac_mode = HVAC_MODE_OFF
                
                if (Decode_packet[0].parsed['MID']['raw_value'] == 8 and (Decode_packet[0].parsed['REQ']['raw_value'] == 0 or Decode_packet[0].parsed['REQ']['raw_value'] == 4)) or Decode_packet[0].parsed['MID']['raw_value'] > 8:
-                     self.send_telegram(bytearray(self.secti[1].KEY), self.RLC_GW, self.secti[1].SLF, self.dev_id,0, MID=0, REQ=15)
+                     self.send_telegram(bytearray(self._sec_ti_key), self.RLC_GW, self.dev_id,0, MID=0, REQ=15)
                      self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
                      self._attributes['RLC_GW'] = self.RLC_GW
                
+               self.async_write_ha_state()
                await self.async_update_ha_state()
+
+    async def async_reset_rlc(self, rlc: list):
+        _LOGGER.debug("set RLC !")
+        self.usb_dongle.send_sec_ti(self._sec_ti_key,self.RLC_GW, self.dev_id)
+        self.RLC_RAD = self.RLC_GW
+        

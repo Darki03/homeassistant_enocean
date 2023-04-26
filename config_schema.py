@@ -23,6 +23,8 @@ from .helpers import dict_to_string
 
 _LOGGER = logging.getLogger(__name__)
 
+DEFAULT_CONF_ID = "[0x00,0x00,0x00,0x00]"
+
 CONF_HEATER = 'heater'
 CONF_COOLER = 'cooler'
 CONF_SENSOR = 'actual_temp_sensor'
