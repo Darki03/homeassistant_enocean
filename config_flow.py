@@ -10,9 +10,9 @@ from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 from datetime import timedelta, datetime
 from homeassistant.const import CONF_DEVICE, CONF_DEVICES, CONF_ID
-from enoceanjob.utils import to_hex_string
 
-from . import dongle
+from .dongle import detect, validate_path, SecureSet
+
 from .const import DOMAIN, ERROR_INVALID_DONGLE_PATH, LOGGER, PLATFORMS
 
 from .config_schema import (
@@ -24,10 +24,14 @@ from .config_schema import (
     CONF_MIN_TEMP,
     CONF_MAX_TEMP,
     CONF_SEC_TI_KEY,
-    CONF_RLC,
+    CONF_RLC_GW,
+    CONF_RLC_EQ, 
     CONF_ADDED_DEVICE,
     CONF_DEVICE_TYPE,
+    CONF_EEP,
 )
+
+from enoceanjob.utils import to_hex_string
 
 PLATFORMS_DICT = {ptf:ptf for ptf in PLATFORMS}
 
@@ -84,7 +88,7 @@ class EnOceanFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.create_enocean_entry(user_input)
             errors = {CONF_DEVICE: ERROR_INVALID_DONGLE_PATH}
 
-        bridges = await self.hass.async_add_executor_job(dongle.detect)
+        bridges = await self.hass.async_add_executor_job(detect)
         if len(bridges) == 0:
             return await self.async_step_manual(user_input)
 
@@ -118,7 +122,7 @@ class EnOceanFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Return True if the user_input contains a valid dongle path."""
         dongle_path = user_input[CONF_DEVICE]
         path_is_valid = await self.hass.async_add_executor_job(
-            dongle.validate_path, dongle_path
+            validate_path, dongle_path
         )
         return path_is_valid
 
@@ -167,7 +171,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             if climate_step_valid(self, user_input):
                 user_input[CONF_ID] = eval(user_input[CONF_ID])
                 user_input.update({CONF_SEC_TI_KEY: list(bytearray.fromhex("869FAB7D296C9E48CEBFF34DF637358A"))})
-                user_input.update({CONF_RLC: [0x00] * 3})
+                user_input.update({CONF_RLC_GW: [0x00] * 4})
+                user_input.update({CONF_RLC_EQ: [0x00] * 4})
+                user_input.update({CONF_EEP: 'D2:33:00'})
                 enocean_id = to_hex_string(user_input[CONF_ID])
                 
                 self._data[CONF_DEVICES][enocean_id] = user_input

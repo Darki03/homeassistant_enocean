@@ -1,9 +1,7 @@
 """Representation of an EnOcean device."""
 import logging
 
-from enoceanjob.protocol.packet import Packet, RadioPacket
-from enoceanjob.protocol.constants import RORG
-from enoceanjob.utils import combine_hex, to_hex_string
+
 from homeassistant.helpers.entity import DeviceInfo
 
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, dispatcher_send
@@ -12,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import SIGNAL_RECEIVE_MESSAGE, SIGNAL_SEND_MESSAGE
+from .utils import add_one_to_byte_list_num
 
 from .config_schema import (
     CONF_NAME,
@@ -22,11 +21,15 @@ from .config_schema import (
     CONF_MIN_TEMP,
     CONF_MAX_TEMP,
     CONF_SEC_TI_KEY,
-    CONF_RLC,
     CONF_ADDED_DEVICE,
     CONF_DEVICE_TYPE,
     DOMAIN
 )
+
+# Enocean integration specific integrations
+from enoceanjob.utils import combine_hex, to_hex_string
+from enoceanjob.protocol.constants import RORG, DECRYPT_RESULT, PACKET
+from enoceanjob.protocol.packet import SECTeachInPacket, RadioPacket, ChainedMSG, Packet
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,7 +68,7 @@ class EnOceanEntity(Entity):
     def _message_received_callback(self, packet: RadioPacket):
         """Handle incoming packets."""
         
-        if packet.sender_int == combine_hex(self.dev_id):# and packet.rorg != RORG.SEC_ENCAPS:
+        if packet.sender_int == combine_hex(self.dev_id) and packet.rorg != RORG.SEC_ENCAPS:
             self.received_signal_strength(packet.dBm)
             self.value_changed(packet)
 
@@ -75,6 +78,7 @@ class EnOceanEntity(Entity):
 
     def received_signal_strength(self, dbm:int =0):
         """Update signal strength"""
+        #To be overrided by sensor platform
 
     def send_command(self, data, optional, packet_type):
         """Send a command via the EnOcean dongle."""
@@ -82,32 +86,52 @@ class EnOceanEntity(Entity):
         packet = Packet(packet_type, data=data, optional=optional)
         dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, packet)
 
-class EquationHeaterEntity(EnOceanEntity, RestoreEntity):
+class EquationHeaterEntity(EnOceanEntity):
 
-    def __init__(self, dev_id, dev_name, config: ConfigEntry):
+    def __init__(self, dev_id, dev_name):
         super().__init__(dev_id, dev_name)
-        self._sectikey = config.data.get(CONF_SEC_TI_KEY)
-        self._RLC_GW = [0x00] * 3
-        self._RLC_RAD = [0x00] * 3
-        self._attributes = {}
     
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
+        packet = RadioPacket.create(rorg=RORG.VLD, rorg_func=0x33, rorg_type=0x00, destination = self.dev_id, MID=0, REQ=8)
+        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, packet, True)
 
-    def _message_received_callback(self, packet):
+    def value_changed(self, packet):
         """Async task for parsing message from the heater"""
         self.hass.async_create_task(self._async_parse_telegram(packet))
     
-    @property
-    def rlc_gw(self):
-        return self._RLC_GW
-    
-    @property
-    def rlc_rad(self):
-        return self._RLC_RAD
         
     async def _async_parse_telegram(self, packet: Packet):
         """Parse heater message"""
-        _LOGGER.debug("Parsing message from the heater !")
+
+        packet.parse_eep(0x33, 0x00)
+
+        
+
+        _LOGGER.debug("Parsing message from the heater : %s", packet)
+
+
+    async def _async_parse_request_status(self):
+        return
+    
+    async def _async_parse_heater_parameters(self):
+        return
+    
+    async def _async_send_gw_request_message(self, **kwargs):
+        return
+    
+    async def _async_send_gw_sensor_parameters(self, **kwargs):
+        return
+    
+    async def _async_send_gw_program(self, **kwargs):
+        return
+    
+    async def _async_send_time_date(self, **kwargs):
+        return
+    
+
+
+    
+
         
  

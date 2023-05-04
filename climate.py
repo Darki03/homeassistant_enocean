@@ -77,7 +77,7 @@ from .climate_schema import(
 from enoceanjob.utils import combine_hex, to_hex_string
 from enoceanjob.protocol.constants import RORG, DECRYPT_RESULT, PACKET
 from enoceanjob.protocol.packet import SECTeachInPacket, RadioPacket, ChainedMSG, Packet
-from .device import EnOceanEntity
+from .device import EnOceanEntity, EquationHeaterEntity
 from .const import SIGNAL_SEND_MESSAGE, DOMAIN, ENOCEAN_DONGLE
 from .utils import add_one_to_byte_list_num
 from .dongle import EnOceanDongle
@@ -130,7 +130,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     return True
 
 
-class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
+class EquationHeater(EquationHeaterEntity, ClimateEntity, RestoreEntity):
     """Representation of a Equation Enocean Heater."""
 
     def __init__(self, hass, config):
@@ -279,29 +279,12 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
             for x in self.preset_modes:
                 if old_state.attributes.get(x + "_temp") is not None:
                      self._attributes[x + "_temp"] = old_state.attributes.get(x + "_temp")
-            if old_state.attributes.get('RLC_GW') is not None:
-                self._attributes['RLC_GW'] = old_state.attributes.get('RLC_GW')
-                self.RLC_GW = self._attributes['RLC_GW']
-                _LOGGER.debug("RLC_GW old_state is : %s !", to_hex_string(old_state.attributes.get('RLC_GW')))
-            if old_state.attributes.get('RLC_RAD') is not None:
-                self._attributes['RLC_RAD'] = old_state.attributes.get('RLC_RAD')
-                self.RLC_RAD = self._attributes['RLC_RAD']
-                _LOGGER.debug("RLC_RAD old_state is : %s !", to_hex_string(old_state.attributes.get('RLC_RAD')))
         else:
             # No previous state, try and restore defaults
             if self._target_temp is None:
                 self._target_temp = self.min_temp
             _LOGGER.warning("No previously saved temperature, setting to %s", self._target_temp)
 
-
-        TMODE = Packet(PACKET.COMMON_COMMAND, data=[0x3E, 0x01])
-        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, TMODE) #Activate transparent mode
-        #dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, self.secti[0]) #Reinit RLC
-        await asyncio.sleep(1)
-        _LOGGER.debug("RLC_GW: %s !", to_hex_string(self.RLC_GW))
-        self.send_telegram(bytearray(self._sec_ti_key), self.RLC_GW, self.dev_id,0, MID=0, REQ=8) #Request information
-        self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
-        self._attributes['RLC_GW'] = self.RLC_GW
     
     async def async_will_remove_from_hass(self):
         _LOGGER.debug("Remove entity : %s", self.dev_name)
@@ -356,53 +339,7 @@ class EquationHeater(EnOceanEntity, ClimateEntity, RestoreEntity):
             return
         self._target_temp = float(temperature)
         _LOGGER.debug("RLC_GW: %s !", to_hex_string(self.RLC_GW))
-        self.send_telegram(bytearray(self._sec_ti_key), self.RLC_GW, self.dev_id,2, MID=2, TSP=temperature)
-        self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
-        self._attributes['RLC_GW'] = self.RLC_GW
-        if self._preset_mode != PRESET_NONE:
-            self._attributes[self._preset_mode + "_temp"] = self._target_temp
-        self.async_write_ha_state()
-        await self.async_update_ha_state()
-        async with self._telegram_received:
-            await asyncio.wait_for(self._telegram_received.wait(), timeout=1.0)
-            _LOGGER.debug("Acknowledge received !")
 
-    def value_changed(self, packet):
-        #Async task for parsing message from the heater
-        self.hass.async_create_task(self._async_parse_telegram(packet))
-
-    async def _async_parse_telegram(self, packet: RadioPacket):
-        _LOGGER.debug("Parsing message from the heater !")
-        
-        if packet.rorg == RORG.SEC_ENCAPS:
-           _LOGGER.debug("RLC_RAD: %s !", to_hex_string(self.RLC_RAD))
-           Decode_packet = packet.decrypt(bytearray(self._sec_ti_key), self.RLC_RAD, SLF_TI=0x8B)
-           self.RLC_RAD = add_one_to_byte_list_num(Decode_packet[2]) if Decode_packet[1] == DECRYPT_RESULT.OK else self.RLC_RAD
-           self._attributes['RLC_RAD'] = self.RLC_RAD
-           
-           if Decode_packet[1] == DECRYPT_RESULT.OK:
-               
-               Decode_packet[0].select_eep(0x33, 0x00)
-               Decode_packet[0].parse_eep()
-
-               if Decode_packet[0].parsed['MID']['raw_value'] == 8:
-                    async with self._telegram_received:
-                            self._telegram_received.notify()
-                    self._cur_temp = Decode_packet[0].parsed['INT']['value']
-                    if Decode_packet[0].parsed['HTF']['raw_value'] == 1:
-                        _LOGGER.debug("Heater is active !")
-                        self._hvac_mode = HVAC_MODE_HEAT
-                    else:
-                        _LOGGER.debug("Heater is idle !")
-                        self._hvac_mode = HVAC_MODE_OFF
-               
-               if (Decode_packet[0].parsed['MID']['raw_value'] == 8 and (Decode_packet[0].parsed['REQ']['raw_value'] == 0 or Decode_packet[0].parsed['REQ']['raw_value'] == 4)) or Decode_packet[0].parsed['MID']['raw_value'] > 8:
-                     self.send_telegram(bytearray(self._sec_ti_key), self.RLC_GW, self.dev_id,0, MID=0, REQ=15)
-                     self.RLC_GW = add_one_to_byte_list_num(self.RLC_GW)
-                     self._attributes['RLC_GW'] = self.RLC_GW
-               
-               self.async_write_ha_state()
-               await self.async_update_ha_state()
 
     async def async_reset_rlc(self, rlc: list):
         _LOGGER.debug("set RLC !")

@@ -1,9 +1,9 @@
 """Support for EnOcean devices."""
+from __future__ import annotations
 import voluptuous as vol
 import asyncio
 import logging
-from typing import Any, TypedDict, cast
-
+from typing import Any, TypedDict, cast, NamedTuple
 from .services import async_setup_services
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import CONF_DEVICE, CONF_ID
@@ -12,6 +12,8 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.const import Platform
+from enoceanjob.utils import combine_hex
+
 
 from .const import DATA_ENOCEAN, DOMAIN, ENOCEAN_DONGLE, PLATFORMS
 from .dongle import EnOceanDongle
@@ -26,8 +28,8 @@ from .config_schema import (
     CONF_TOLERANCE,
     CONF_RELATED_CLIMATE,
     CONF_MIN_CYCLE_DURATION,
+    CONF_RLC_GW,
     CONF_SEC_TI_KEY,
-    CONF_RLC
 )
 
 
@@ -36,6 +38,7 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 _LOGGER = logging.getLogger(__name__)
+
 # component setup
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the EnOcean component."""
@@ -64,7 +67,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     return True
 
-
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up an EnOcean dongle for the given entry."""
     enocean_data = hass.data.setdefault(DATA_ENOCEAN, {})
@@ -74,6 +76,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # _LOGGER.debug("_hass data enocean: %s", hass.data[DOMAIN])
     _LOGGER.debug("_dongle path is: %s", config_entry.data[CONF_DEVICE])
     await usb_dongle.async_setup()
+    await usb_dongle.async_forward_config_entry(config_entry)
 
     # Register update listener
     hass_data = dict(config_entry.data)
@@ -121,8 +124,9 @@ async def options_update_listener(hass: HomeAssistant, config_entry: ConfigEntry
     new_device_id = config_entry.data['added_device']
     new_device_config = devices_config.get(new_device_id)
 
-    # Send secure teach in for secure devices
+    # Send secure teach in for secure devices and reload devices
     if new_device_config.get(CONF_SEC_TI_KEY, []) != []:
-        usb_dongle.send_sec_ti(new_device_config.get(CONF_SEC_TI_KEY),new_device_config.get(CONF_RLC),new_device_config.get(CONF_ID))
+        await usb_dongle.async_send_sec_ti(new_device_config.get(CONF_SEC_TI_KEY),new_device_config.get(CONF_RLC_GW),new_device_config.get(CONF_ID))
+        await usb_dongle.async_forward_config_entry(config_entry)
         await hass.config_entries.async_unload_platforms(config_entry, PLATFORMS)
         hass.async_create_task(hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS))
