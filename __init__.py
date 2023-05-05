@@ -3,20 +3,22 @@ from __future__ import annotations
 import voluptuous as vol
 import asyncio
 import logging
+import copy
 from typing import Any, TypedDict, cast, NamedTuple
 from .services import async_setup_services
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
-from homeassistant.const import CONF_DEVICE, CONF_ID
-from homeassistant.core import HomeAssistant
+from homeassistant.const import CONF_DEVICE, CONF_DEVICES, CONF_ID
+from homeassistant.core import HomeAssistant, callback
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.const import Platform
 from enoceanjob.utils import combine_hex
 
 
-from .const import DATA_ENOCEAN, DOMAIN, ENOCEAN_DONGLE, PLATFORMS
-from .dongle import EnOceanDongle
+from .const import DATA_ENOCEAN, DOMAIN, ENOCEAN_DONGLE, PLATFORMS, SIGNAL_EVENT
+from .dongle import EnOceanDongle, SecureSet
 
 from .config_schema import (
     CONF_HEATER,
@@ -29,6 +31,7 @@ from .config_schema import (
     CONF_RELATED_CLIMATE,
     CONF_MIN_CYCLE_DURATION,
     CONF_RLC_GW,
+    CONF_RLC_EQ,
     CONF_SEC_TI_KEY,
 )
 
@@ -36,6 +39,8 @@ from .config_schema import (
 CONFIG_SCHEMA = vol.Schema(
     {DOMAIN: vol.Schema({vol.Required(CONF_DEVICE): cv.string})}, extra=vol.ALLOW_EXTRA
 )
+
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,7 +75,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up an EnOcean dongle for the given entry."""
     enocean_data = hass.data.setdefault(DATA_ENOCEAN, {})
-    
+    config = config_entry.data
     usb_dongle = EnOceanDongle(hass, config_entry)
     enocean_data[ENOCEAN_DONGLE] = usb_dongle
     # _LOGGER.debug("_hass data enocean: %s", hass.data[DOMAIN])
@@ -99,14 +104,29 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         sw_version=usb_dongle._communicator.api_version,
         hw_version=usb_dongle._communicator.app_version,
     )
+
+    @callback
+    def _update_rlc_entries(SecureSet: dict[str, SecureSet]):
+        _LOGGER.debug("Update RLC entries : %s", SecureSet)
+        data = config_entry.data.copy()
+        data[CONF_DEVICES] = copy.deepcopy(config_entry.data[CONF_DEVICES])
+        #Update secure devices  RLCs
+        for device in SecureSet.keys():
+            data[CONF_DEVICES][device][CONF_RLC_GW] = SecureSet[device].rlc_gw
+            data[CONF_DEVICES][device][CONF_RLC_EQ] = SecureSet[device].rlc_eq
+        _LOGGER.debug("Update entrry : %s", data)
+        hass.config_entries.async_update_entry(entry=config_entry, data=data)
     
+    config_entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_EVENT, _update_rlc_entries))
+
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload ENOcean config entry."""
-    enocean_dongle = hass.data[DATA_ENOCEAN][ENOCEAN_DONGLE]
+    enocean_dongle: EnOceanDongle = hass.data[DATA_ENOCEAN][ENOCEAN_DONGLE]
     enocean_dongle.unload()
+    
     hass.data.pop(DATA_ENOCEAN)
     return True
 
