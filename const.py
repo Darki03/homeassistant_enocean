@@ -11,7 +11,10 @@ ERROR_INVALID_DONGLE_PATH = "invalid_dongle_path"
 
 SIGNAL_RECEIVE_MESSAGE = "enocean.receive_message"
 SIGNAL_SEND_MESSAGE = "enocean.send_message"
-SIGNAL_EVENT = f"{DOMAIN}_event"
+SIGNAL_RLC_UPDATE = "enocean.rlc_update"
+SIGNAL_RLC_RESET = "enocean.rlc_reset"
+SIGNAL_ADD_SET_TI_DEV = "enocean.add_sec_ti_dev"
+SIGNAL_SECT_TI = "enocean.sec_ti"
 
 LOGGER = logging.getLogger(__package__)
 

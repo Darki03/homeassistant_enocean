@@ -3,17 +3,20 @@
 import voluptuous as vol
 import logging
 import copy
+import asyncio
 import re
 from typing import Any, TypedDict, cast
 from homeassistant import config_entries
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.dispatcher import async_dispatcher_send, dispatcher_send
 from datetime import timedelta, datetime
 from homeassistant.const import CONF_DEVICE, CONF_DEVICES, CONF_ID
+from homeassistant.config_entries import ConfigEntry
+from .dongle import detect, validate_path, EnOceanDongle, SecureSet
+from enoceanjob.protocol.packet import SECTeachInPacket
 
-from .dongle import detect, validate_path, SecureSet
-
-from .const import DOMAIN, ERROR_INVALID_DONGLE_PATH, LOGGER, PLATFORMS
+from .const import DOMAIN, ERROR_INVALID_DONGLE_PATH, LOGGER, PLATFORMS, SIGNAL_SEND_MESSAGE
 
 from .config_schema import (
     CONF_NAME,
@@ -29,6 +32,8 @@ from .config_schema import (
     CONF_ADDED_DEVICE,
     CONF_DEVICE_TYPE,
     CONF_EEP,
+    HEATER_MODEL,
+    CONF_HEATER_MODEL
 )
 
 from enoceanjob.utils import to_hex_string
@@ -151,7 +156,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     """EnOcean integration option flow."""
     MANUAL_PATH_VALUE = "Custom path"
 
-    def __init__(self, config_entry):
+    def __init__(self, config_entry: ConfigEntry):
         """Initialize."""
         self._errors = {}
         self._data = {}
@@ -170,16 +175,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             if climate_step_valid(self, user_input):
                 user_input[CONF_ID] = eval(user_input[CONF_ID])
+                user_input[CONF_DEVICE_TYPE] = 'climate'
                 user_input.update({CONF_SEC_TI_KEY: list(bytearray.fromhex("869FAB7D296C9E48CEBFF34DF637358A"))})
                 user_input.update({CONF_RLC_GW: [0x00] * 4})
                 user_input.update({CONF_RLC_EQ: [0x00] * 4})
                 user_input.update({CONF_EEP: 'D2:33:00'})
                 enocean_id = to_hex_string(user_input[CONF_ID])
-                
                 self._data[CONF_DEVICES][enocean_id] = user_input
-                self._data[CONF_ADDED_DEVICE] = to_hex_string(user_input[CONF_ID])
-                _LOGGER.debug("_data to update config entry: %s", self._data)
+                Dev_sec_set = SecureSet(key=user_input.get(CONF_SEC_TI_KEY),
+                                        rlc_gw=user_input.get(CONF_RLC_GW),
+                                        rlc_eq=user_input.get(CONF_RLC_EQ))
+                SEC_TI_TELEGRAM = SECTeachInPacket.create_SECTI_chain(Key=Dev_sec_set.key, RLC=Dev_sec_set.rlc_gw, SLF=0x8B, destination=user_input.get(CONF_ID))
+                dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, SEC_TI_TELEGRAM[0])
+                await asyncio.sleep(0.5)
+
+                # _LOGGER.debug("_data to update config entry: %s", self._data)
                 self.hass.config_entries.async_update_entry(self._config_entry, data=self._data)
+                await self.hass.config_entries.async_reload(self._config_entry.entry_id)
 
                 return self.async_create_entry(title="", data={})
             return await self.show_config_climate(user_input)
@@ -193,7 +205,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="init",
             data_schema=vol.Schema({
                 vol.Required(CONF_ID, default=DEFAULT_CONF_ID): str,
-                vol.Required(CONF_DEVICE_TYPE, default=PLATFORMS[-1]): vol.In(PLATFORMS),
+                vol.Required(CONF_HEATER_MODEL, default='virtuoso'): vol.In(HEATER_MODEL),
                 vol.Optional(CONF_MAX_TEMP, default=DEFAULT_MAX_TEMP): int,
                 vol.Optional(CONF_MIN_TEMP, default=DEFAULT_MIN_TEMP): int,
                 vol.Optional(CONF_NAME, default=DEFAULT_NAME): str}),

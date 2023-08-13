@@ -2,10 +2,11 @@
 from __future__ import annotations
 from enoceanjob.protocol.constants import RORG
 from enoceanjob.utils import combine_hex
+from dataclasses import dataclass
 import voluptuous as vol
-
+from collections.abc import Callable
 from homeassistant.components.switch import PLATFORM_SCHEMA, SwitchEntity
-from homeassistant.const import CONF_ID, CONF_NAME
+from homeassistant.const import CONF_ID, CONF_NAME, EntityCategory
 from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -18,6 +19,9 @@ CONF_BEHAVIOR = "behavior"
 CONF_AVAILABLE_BEHAVIOR = ["relay", "onoff", "push", "button"]
 DEFAULT_NAME = "EnOcean Switch"
 CONF_BASE_ID = "base_id"
+
+SWITCH_TYPE_RLC = "reset_rlc"
+
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {

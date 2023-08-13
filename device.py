@@ -93,41 +93,60 @@ class EquationHeaterEntity(EnOceanEntity):
     
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
-        packet = RadioPacket.create(rorg=RORG.VLD, rorg_func=0x33, rorg_type=0x00, destination = self.dev_id, MID=0, REQ=8)
-        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, packet, True)
 
     def value_changed(self, packet):
         """Async task for parsing message from the heater"""
         self.hass.async_create_task(self._async_parse_telegram(packet))
     
-        
+    def create_and_send_secure_packet(self, **kwargs):    
+        packet = RadioPacket.create(rorg=RORG.VLD, rorg_func=0x33, rorg_type=0x00, destination = self.dev_id, **kwargs)
+        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, packet, True)
+    
     async def _async_parse_telegram(self, packet: Packet):
         """Parse heater message"""
 
-        packet.parse_eep(0x33, 0x00)
+        # packet.parse_eep(0x33, 0x00)
 
+        MID = packet.parsed['MID']['raw_value']
         
+        if MID == 8:
+            await self.async_parse_request_status(packet)
 
-        _LOGGER.debug("Parsing message from the heater : %s", packet)
+        if MID == 9:
+            await self.async_parse_heater_parameters(packet)
 
 
-    async def _async_parse_request_status(self):
-        return
+    async def async_parse_request_status(self, packet: RadioPacket):
+        """Parse MID=8 message frome Heater
+            Contains INT temperature"""
     
-    async def _async_parse_heater_parameters(self):
-        return
+    async def async_parse_heater_parameters(self, packet: RadioPacket):
+        """Parse MID=9 message frome Heater
+            Contains EM (Energy Mesurement) and FMV"""
     
-    async def _async_send_gw_request_message(self, **kwargs):
-        return
+    async def async_send_gw_request_message(self, **kwargs):
+        """Send Gateway request message with indicated kwargs"""
+        kwargs.update({'MID': 0})
+        self.create_and_send_secure_packet(**kwargs)
+        return True
     
-    async def _async_send_gw_sensor_parameters(self, **kwargs):
-        return
+    async def async_send_gw_sensor_parameters(self, **kwargs):
+        """Send Gateway request message with indicated kwargs"""
+        kwargs.update({'MID': 1})
+        self.create_and_send_secure_packet(**kwargs)
+        return True
     
-    async def _async_send_gw_program(self, **kwargs):
-        return
+    async def async_send_gw_program(self, **kwargs):
+        """Send Gateway request message with indicated kwargs"""
+        kwargs.update({'MID': 2})
+        self.create_and_send_secure_packet(**kwargs)
+        return True
     
-    async def _async_send_time_date(self, **kwargs):
-        return
+    async def async_send_time_date(self, **kwargs):
+        """Send Gateway request message with indicated kwargs"""
+        kwargs.update({'MID': 3})
+        self.create_and_send_secure_packet(**kwargs)
+        return True
     
 
 

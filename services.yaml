@@ -33,3 +33,14 @@ reset_rlc:
     rlc:
       name: RLC
       description: RLC to set
+send_custom:
+  name: Send custom message to the heater
+  description: Send custom
+  target:
+    entity:
+      integration: enocean
+      domain: climate
+  fields:
+    args:
+      name: command kwargs
+      description: "ARG1=X,ARG2=Y,..."

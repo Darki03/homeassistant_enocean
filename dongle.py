@@ -2,6 +2,7 @@
 import glob
 import time
 import logging
+import asyncio
 from Crypto.Random import get_random_bytes
 from os.path import basename, normpath
 from dataclasses import dataclass, field
@@ -18,9 +19,11 @@ from homeassistant import core
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import CONF_DEVICE, CONF_DEVICES
 
-from .const import SIGNAL_RECEIVE_MESSAGE, SIGNAL_SEND_MESSAGE, DOMAIN, SIGNAL_EVENT
+from .const import SIGNAL_RECEIVE_MESSAGE, SIGNAL_SEND_MESSAGE, DOMAIN, SIGNAL_RLC_UPDATE, SIGNAL_RLC_RESET, SIGNAL_SECT_TI
 from .config_schema import CONF_SEC_TI_KEY, CONF_RLC_GW, CONF_RLC_EQ, CONF_EEP
 _LOGGER = logging.getLogger(__name__)
+
+
 
 #Dataclass for secure data
 @dataclass
@@ -81,19 +84,22 @@ class EnOceanDongle:
         """Finish the setup of the bridge and supported platforms."""
         self._communicator.start()
         self._communicator.get_dongle_info()
+        self._communicator.set_transparent_mode()
         self.dispatcher_disconnect_handle = async_dispatcher_connect(
             self.hass, SIGNAL_SEND_MESSAGE, self._send_message_callback
         )
+        self.config_entry.async_on_unload(async_dispatcher_connect(self.hass, SIGNAL_RLC_RESET, self._reset_rlc_for_device))
 
-    #Update dongle config entry at startup or when a secure device is added
-    async def async_forward_config_entry(self, config_entry: ConfigEntry):
+
+    #Update dongle config entry at startup
+    def update_secure_sets(self, config_entry: ConfigEntry):
         self.devices_data = config_entry.data[CONF_DEVICES]
+        _LOGGER.debug("devices list: %s", config_entry.data[CONF_DEVICES].keys())
         for device in config_entry.data[CONF_DEVICES].keys():
             key = config_entry.data[CONF_DEVICES][device][CONF_SEC_TI_KEY]
             rlc_gw = config_entry.data[CONF_DEVICES][device][CONF_RLC_GW]
             rlc_eq = config_entry.data[CONF_DEVICES][device][CONF_RLC_EQ]
             self.secure_sets.update({device: SecureSet(key=key,rlc_gw=rlc_gw,rlc_eq=rlc_eq)})
-            
 
     def unload(self):
         """Disconnect callbacks established at init time."""
@@ -111,7 +117,7 @@ class EnOceanDongle:
             command = command.encrypt(bytearray(Dev_sec_set.key),Dev_sec_set.rlc_gw, Dev_sec_set.slf)
             Dev_sec_set.incr_rlc_gw()
             self.secure_sets[command.destination_hex] = Dev_sec_set
-            async_dispatcher_send(self.hass, SIGNAL_EVENT, self.secure_sets)
+            async_dispatcher_send(self.hass, SIGNAL_RLC_UPDATE, command.destination_hex, Dev_sec_set)
             if len(command.data) > 15:
                 command = ChainedMSG.create_CDM(command,CDM_RORG=RORG.CDM)
 
@@ -123,12 +129,28 @@ class EnOceanDongle:
     def send_message(self, command):
         """Send a command through the EnOcean dongle (public)."""
         self._communicator.send(command)
+    
+    def _send_secure_teach_in(self, dev_id: str):
+        if self.secure_sets.get(dev_id, {}) == {}:
+            return False
+        
+        Dev_sec_set: SecureSet = self.secure_sets[dev_id]
+        SEC_TI_TELEGRAM = SECTeachInPacket.create_SECTI_chain(Key=Dev_sec_set.key, RLC=Dev_sec_set.rlc_gw, SLF=0x8B, destination=from_hex_string(dev_id))
+        
+        if self._communicator.send_list(SEC_TI_TELEGRAM[0]):
+            time.sleep(0.5)
+            return True
+        return False
 
-    async def async_send_sec_ti(self, Key, RLC, destination):
-        '''Send a secure teach-in message'''
-        SEC_TI_TELEGRAM = SECTeachInPacket.create_SECTI_chain(Key=Key, RLC=RLC, SLF=0x8B, destination=destination)
-        self._communicator.send_list(SEC_TI_TELEGRAM[0])
-        time.sleep(0.5)
+    def _reset_rlc_for_device(self, dev_id):
+        if self.secure_sets.get(dev_id, {}) != {}:
+            _LOGGER.debug("reset RLC for device : %s", dev_id)
+            Dev_sec_set: SecureSet = self.secure_sets[dev_id]
+            self._send_secure_teach_in(dev_id)
+            Dev_sec_set.rlc_eq = Dev_sec_set.rlc_gw
+            self.secure_sets[dev_id] = Dev_sec_set
+            async_dispatcher_send(self.hass, SIGNAL_RLC_UPDATE, dev_id, Dev_sec_set)
+
 
     @property
     def communicator(self):
@@ -153,7 +175,7 @@ class EnOceanDongle:
                 Dev_sec_set.rlc_eq = decrypted[2]
                 Dev_sec_set.incr_rlc_eq()
                 self.secure_sets[packet.sender_hex] = Dev_sec_set
-                async_dispatcher_send(self.hass, SIGNAL_EVENT, self.secure_sets)
+                async_dispatcher_send(self.hass, SIGNAL_RLC_UPDATE, packet.sender_hex, Dev_sec_set)
                 if decrypted[1] == DECRYPT_RESULT.OK: 
                     packet = decrypted[0]
 

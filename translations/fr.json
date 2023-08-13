@@ -27,7 +27,7 @@
         "step": {
             "init": {
                 "title": "Ajouter un appareil EnOcean",
-                "description": "Coucou",
+                "description": "Radiateur Equation Virtuoso ou Alidea connect",
                 "data": {
                     "name": "Nom",
                     "min_temp": "Temperature minimale autorisée",

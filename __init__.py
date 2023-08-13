@@ -14,10 +14,10 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.const import Platform
-from enoceanjob.utils import combine_hex
+from enoceanjob.utils import combine_hex, to_hex_string
 
 
-from .const import DATA_ENOCEAN, DOMAIN, ENOCEAN_DONGLE, PLATFORMS, SIGNAL_EVENT
+from .const import DATA_ENOCEAN, DOMAIN, ENOCEAN_DONGLE, PLATFORMS, SIGNAL_RLC_UPDATE, SIGNAL_ADD_SET_TI_DEV
 from .dongle import EnOceanDongle, SecureSet
 
 from .config_schema import (
@@ -78,16 +78,19 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     config = config_entry.data
     usb_dongle = EnOceanDongle(hass, config_entry)
     enocean_data[ENOCEAN_DONGLE] = usb_dongle
+
     # _LOGGER.debug("_hass data enocean: %s", hass.data[DOMAIN])
     _LOGGER.debug("_dongle path is: %s", config_entry.data[CONF_DEVICE])
+
+    
     await usb_dongle.async_setup()
-    await usb_dongle.async_forward_config_entry(config_entry)
+    usb_dongle.update_secure_sets(config_entry)
 
     # Register update listener
-    hass_data = dict(config_entry.data)
-    unsub_options_update_listener = config_entry.add_update_listener(options_update_listener)
-    hass_data["unsub_options_update_listener"] = unsub_options_update_listener
-    hass.data[DOMAIN][config_entry.entry_id] = hass_data
+    # hass_data = dict(config_entry.data)
+    # unsub_options_update_listener = config_entry.add_update_listener(options_update_listener)
+    # hass_data["unsub_options_update_listener"] = unsub_options_update_listener
+    # hass.data[DOMAIN][config_entry.entry_id] = hass_data
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
 
@@ -95,7 +98,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(
         config_entry_id=config_entry.entry_id,
-        connections={('path',config_entry.data[CONF_DEVICE])},
+        connections={('path',config_entry.data [CONF_DEVICE])},
         identifiers={(DOMAIN, config_entry.data[CONF_DEVICE])},
         manufacturer="EnOcean",
         suggested_area="Gaine_tech",
@@ -106,24 +109,26 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     )
 
     @callback
-    def _update_rlc_entries(SecureSet: dict[str, SecureSet]):
-        _LOGGER.debug("Update RLC entries : %s", SecureSet)
+    def _update_rlc_entries(dev_id, Dev_sec_set: SecureSet):
+        _LOGGER.debug("Update RLC entries for device %s: %s, %s", dev_id, to_hex_string(Dev_sec_set.rlc_gw), to_hex_string(Dev_sec_set.rlc_eq))
         data = config_entry.data.copy()
         data[CONF_DEVICES] = copy.deepcopy(config_entry.data[CONF_DEVICES])
-        #Update secure devices  RLCs
-        for device in SecureSet.keys():
-            data[CONF_DEVICES][device][CONF_RLC_GW] = SecureSet[device].rlc_gw
-            data[CONF_DEVICES][device][CONF_RLC_EQ] = SecureSet[device].rlc_eq
-        _LOGGER.debug("Update entrry : %s", data)
+        #Update secure device  RLCs
+        data[CONF_DEVICES][dev_id][CONF_RLC_GW] = Dev_sec_set.rlc_gw
+        data[CONF_DEVICES][dev_id][CONF_RLC_EQ] = Dev_sec_set.rlc_eq
         hass.config_entries.async_update_entry(entry=config_entry, data=data)
     
-    config_entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_EVENT, _update_rlc_entries))
+    config_entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_RLC_UPDATE, _update_rlc_entries))
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload ENOcean config entry."""
+    
+    if not await hass.config_entries.async_unload_platforms(config_entry, PLATFORMS):
+        return False
+    
     enocean_dongle: EnOceanDongle = hass.data[DATA_ENOCEAN][ENOCEAN_DONGLE]
     enocean_dongle.unload()
     
@@ -131,22 +136,22 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     return True
 
 #Config Flow update listener
-async def options_update_listener(hass: HomeAssistant, config_entry: ConfigEntry):
-    _LOGGER.debug("Config update: %s", config_entry.data)
+# async def options_update_listener(hass: HomeAssistant, config_entry: ConfigEntry):
+#     _LOGGER.debug("Config update: %s", config_entry.data)
     
-    #Get EnOcean dongle object
-    usb_dongle: EnOceanDongle
-    new_device_config : dict[str: Any]
-    usb_dongle = hass.data[DOMAIN].get(ENOCEAN_DONGLE)
+#     #Get EnOcean dongle object
+#     usb_dongle: EnOceanDongle
+#     new_device_config : dict[str: Any]
+#     usb_dongle = hass.data[DOMAIN].get(ENOCEAN_DONGLE)
 
-    #Get added device
-    devices_config = config_entry.data.get('devices')
-    new_device_id = config_entry.data['added_device']
-    new_device_config = devices_config.get(new_device_id)
+#     #Get added device
+#     devices_config = config_entry.data.get('devices')
+#     new_device_id = config_entry.data['added_device']
+#     new_device_config = devices_config.get(new_device_id)
 
-    # Send secure teach in for secure devices and reload devices
-    if new_device_config.get(CONF_SEC_TI_KEY, []) != []:
-        await usb_dongle.async_send_sec_ti(new_device_config.get(CONF_SEC_TI_KEY),new_device_config.get(CONF_RLC_GW),new_device_config.get(CONF_ID))
-        await usb_dongle.async_forward_config_entry(config_entry)
-        await hass.config_entries.async_unload_platforms(config_entry, PLATFORMS)
-        hass.async_create_task(hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS))
+#     # Send secure teach in for secure devices and reload devices
+#     if new_device_config.get(CONF_SEC_TI_KEY, []) != []:
+#         await usb_dongle.async_send_sec_ti(new_device_config.get(CONF_SEC_TI_KEY),new_device_config.get(CONF_RLC_GW),new_device_config.get(CONF_ID))
+#         usb_dongle.update_secure_sets(config_entry)
+#         await hass.config_entries.async_unload_platforms(config_entry, PLATFORMS)
+#         hass.async_create_task(hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS))

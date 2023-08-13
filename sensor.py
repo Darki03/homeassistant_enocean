@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -21,6 +22,7 @@ from homeassistant.const import (
     CONF_NAME,
     PERCENTAGE,
     POWER_WATT,
+    ENERGY_KILO_WATT_HOUR,
     STATE_CLOSED,
     STATE_OPEN,
     TEMP_CELSIUS,
@@ -38,7 +40,8 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from .config_schema import CONF_DEVICE_TYPE, CONF_SEC_TI_KEY
 from .const import DOMAIN
-from .device import EnOceanEntity
+from .device import EnOceanEntity, EquationHeaterEntity
+from enoceanjob.protocol.packet import RadioPacket
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +54,7 @@ DEFAULT_NAME = "EnOcean sensor"
 
 SENSOR_TYPE_HUMIDITY = "humidity"
 SENSOR_TYPE_POWER = "powersensor"
+SENSOR_TYPE_ENERGY = "energy"
 SENSOR_TYPE_TEMPERATURE = "temperature"
 SENSOR_TYPE_WINDOWHANDLE = "windowhandle"
 SENSOR_TYPE_DOORDETECTOR = "doordetector"
@@ -109,6 +113,16 @@ SENSOR_DESC_POWER = EnOceanSensorEntityDescription(
     device_class=SensorDeviceClass.POWER,
     state_class=SensorStateClass.MEASUREMENT,
     unique_id=lambda dev_id: f"{combine_hex(dev_id)}-{SENSOR_TYPE_POWER}",
+)
+
+SENSOR_DESC_ENERGY = EnOceanSensorEntityDescription(
+    key=SENSOR_TYPE_ENERGY,
+    name="Energy",
+    native_unit_of_measurement=ENERGY_KILO_WATT_HOUR,
+    icon="mdi:home-lightning-bolt-outline",
+    device_class=SensorDeviceClass.ENERGY,
+    state_class=SensorStateClass.TOTAL_INCREASING,
+    unique_id=lambda dev_id: f"{combine_hex(dev_id)}-{SENSOR_TYPE_ENERGY}",
 )
 
 SENSOR_DESC_WINDOWHANDLE = EnOceanSensorEntityDescription(
@@ -189,17 +203,20 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
     if result == {}:
         return
+    
     for device in result[CONF_DEVICES].keys():
         if result[CONF_DEVICES][device][CONF_DEVICE_TYPE] == 'climate':
-            _LOGGER.info("setup entity-config_entry_data=%s",result[CONF_DEVICES][device])
+            # _LOGGER.info("setup entity-config_entry_data=%s",result[CONF_DEVICES][device])
             config_entity_signal = EnOceanSignalSensor(result[CONF_DEVICES][device])
             config_entities_list.append(config_entity_signal)
+            config_entity_energy = EquationHeaterEnergySensor(result[CONF_DEVICES][device])
+            config_entities_list.append(config_entity_energy)
 
     if len(config_entities_list) != 0:
         async_add_entities(config_entities_list, True)
         _LOGGER.debug("sensor:async_setup_platform exit - created [%d] entitites", len(config_entities_list))
     else:
-        _LOGGER.error("sensor:async_setup_platform exit - no climate entities found")
+        _LOGGER.error("sensor:async_setup_platform exit - no entities found")
     return True
 
 
@@ -239,6 +256,41 @@ class EnOceanSignalSensor(EnOceanSensor):
 
     def received_signal_strength(self, dbm:int =0):
         self._attr_native_value = dbm
+        self.schedule_update_ha_state()
+
+class EquationHeaterEnergySensor(EquationHeaterEntity, RestoreEntity, SensorEntity):
+    """Representation of an Equation Heater power sensor"""
+
+    def __init__(self, config):
+        super().__init__(config.get(CONF_ID), config.get(CONF_NAME))
+        self.entity_description = SENSOR_DESC_ENERGY
+        self._attr_name = f"{SENSOR_DESC_ENERGY.name}"
+        self._attr_unique_id = SENSOR_DESC_ENERGY.unique_id(config.get(CONF_ID))
+        self._telegram_received = asyncio.Condition()
+
+    async def async_added_to_hass(self):
+        """Call when entity about to be added to hass."""
+        # If not None, we got an initial value.
+        await super().async_added_to_hass()
+        
+        if self._attr_native_value is not None:
+            return
+
+        if (state := await self.async_get_last_state()) is not None:
+            self._attr_native_value = state.state
+
+        # await self.async_send_gw_request_message(REQ=9)
+        # async with self._telegram_received:
+        #     await asyncio.wait_for(self._telegram_received.wait(), timeout=1.0)
+        #     _LOGGER.debug("Acknowledge received !")
+        
+
+    async def async_parse_heater_parameters(self, packet: RadioPacket):
+        MID = packet.parsed['MID']['raw_value']
+        _LOGGER.debug("Parsing heater parameters from the heater MID : %s", MID)
+        # async with self._telegram_received:
+        #             self._telegram_received.notify()
+        self._attr_native_value = packet.parsed['EM']['value']
         self.schedule_update_ha_state()
 
 class EnOceanPowerSensor(EnOceanSensor):
